@@ -7,7 +7,12 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import nltk
 from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
 from nltk.probability import FreqDist
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from nltk import ne_chunk, pos_tag
+from nltk.util import ngrams
+from collections import Counter
 import re
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
@@ -99,17 +104,46 @@ def analyze_texts(texts):
         Currently rudimentary nlp analysis using nltk.
     """
     all_words = []
-    for text in texts:
-        words = word_tokenize(text)
-        words = [re.sub(r'[^a-zA-Z0-9]', '', word) for word in words if word.isalnum()] # regex for
-        all_words.extend(words)
+    all_text = ' '.join(texts)
     
-    fdist = FreqDist(all_words)
+    words = word_tokenize(all_text)
+    words = [word.lower() for word in words if word.isalnum()]
+    
+    stop_words = set(stopwords.words('english'))
+    words = [word for word in words if word not in stop_words]
+    
+    # frequency distribution
+    fdist = FreqDist(words)
+    
+    # named entity recognition
+    pos_tags = pos_tag(words)
+    named_entities = ne_chunk(pos_tags)
+    
+    # bigrams
+    bigrams = ngrams(words, 2)
+    bigram_freq = Counter(bigrams)
+    
+    # sentiment 
+    sid = SentimentIntensityAnalyzer()
+    sentiment = sid.polarity_scores(all_text)
     
     print("Most common words:")
     for word, frequency in fdist.most_common(10):
         print(f'{word}: {frequency}')
     
+    print("\nMost common bigrams:")
+    for bigram, frequency in bigram_freq.most_common(10):
+        print(f'{" ".join(bigram)}: {frequency}')
+    
+    print("\nSentiment analysis:")
+    for k, v in sentiment.items():
+        print(f'{k}: {v}')
+    
+    print("\nNamed Entities:")
+    for chunk in named_entities:
+        if hasattr(chunk, 'label'):
+            print(f'{chunk.label()}: {" ".join(c[0] for c in chunk)}')
+
 
 if __name__ == "__main__":
     main()
