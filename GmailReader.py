@@ -26,20 +26,14 @@ Developed by Michael Sanders, Cornell University 2026, mgs264@cornell.edu
 
 """
 
-
 def main():
     """
-    Lists the user's Gmail labels and fetches the first 100 sent messages.
+    Lists the user's Gmail labels and fetches the sent messages.
     """
     nltk.data.path.append('/Users/michaelsanders/Desktop/nltk_data') # manually path for nltk data
     creds = None
-    # token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    # to restart authorization flow, delete token.json
     if os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    # if there are no (valid) credentials available, let the user log in
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -48,51 +42,58 @@ def main():
                 "credentials.json", SCOPES
             )
             creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
         with open("token.json", "w") as token:
             token.write(creds.to_json())
 
     try:
-        # call the gmail API
         service = build("gmail", "v1", credentials=creds)
         sent_texts = readSentMail(service)
         analyze_texts(sent_texts)
 
     except HttpError as error:
-        # TODO - Handle errors from gmail API
         print(f"An error occurred: {error}")
 
 def readSentMail(service):
-    """Fetches and stores the text of the first 100 sent messages in a list."""
+    """Fetches and stores the text of all sent messages."""
     try:
-        # Fetch sent messages
-        results = service.users().messages().list(userId='me', labelIds=['SENT'], maxResults=100).execute()
+        sent_texts = []
+        results = service.users().messages().list(userId='me', labelIds=['SENT'], maxResults=500).execute()
         messages = results.get('messages', [])
+
+        while 'nextPageToken' in results:
+            page_token = results['nextPageToken']
+            results = service.users().messages().list(userId='me', labelIds=['SENT'], maxResults=500, pageToken=page_token).execute()
+            messages.extend(results.get('messages', []))
 
         if not messages:
             print("No sent messages found.")
             return []
 
-        sent_texts = []
         for msg in messages:
             msg_id = msg['id']
             msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
             payload = msg_data['payload']
 
-            # check if payload has 'parts'
-            if 'parts' in payload:
-                for part in payload['parts']:
-                    if part['mimeType'] == 'text/plain':
+            # recursively extract the message parts
+            def extract_parts(parts, sent_texts):
+                for part in parts:
+                    if part['mimeType'] == 'text/plain' and 'data' in part['body']:
                         text = part['body']['data']
                         decoded_text = base64.urlsafe_b64decode(text).decode('utf-8')
                         sent_texts.append(decoded_text)
+                    elif 'parts' in part:
+                        extract_parts(part['parts'], sent_texts)
+
+            # Check if payload has 'parts'
+            if 'parts' in payload:
+                extract_parts(payload['parts'], sent_texts)
             elif 'body' in payload and 'data' in payload['body']:
-                # handle the case where there's no 'parts', just 'body'
+                # Handle the case where there's no 'parts', just 'body'
                 text = payload['body']['data']
                 decoded_text = base64.urlsafe_b64decode(text).decode('utf-8')
                 sent_texts.append(decoded_text)
 
-        print("First 100 sent messages stored in the list.")
+        print(f"Total sent messages stored in the list: {len(sent_texts)}")
         return sent_texts
 
     except HttpError as error:
@@ -100,9 +101,7 @@ def readSentMail(service):
         return []
 
 def analyze_texts(texts):
-    """Analyzes the given list of texts for speech patterns.
-        Currently rudimentary nlp analysis using nltk.
-    """
+    """Analyzes the given list of texts for speech patterns."""
     all_words = []
     all_text = ' '.join(texts)
     
@@ -112,18 +111,14 @@ def analyze_texts(texts):
     stop_words = set(stopwords.words('english'))
     words = [word for word in words if word not in stop_words]
     
-    # frequency distribution
     fdist = FreqDist(words)
     
-    # named entity recognition
     pos_tags = pos_tag(words)
     named_entities = ne_chunk(pos_tags)
     
-    # bigrams
     bigrams = ngrams(words, 2)
     bigram_freq = Counter(bigrams)
     
-    # sentiment 
     sid = SentimentIntensityAnalyzer()
     sentiment = sid.polarity_scores(all_text)
     
@@ -143,7 +138,6 @@ def analyze_texts(texts):
     for chunk in named_entities:
         if hasattr(chunk, 'label'):
             print(f'{chunk.label()}: {" ".join(c[0] for c in chunk)}')
-
 
 if __name__ == "__main__":
     main()
